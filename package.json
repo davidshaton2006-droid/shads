@@ -1,0 +1,19 @@
+{
+  "name": "shads",
+  "version": "0.1.0",
+  "description": "Приватная система управления рекламой в Яндекс.Директе и VK Ads через собственные OAuth-доступы, с MCP-сервером для ИИ-агента и guardrail-слоем.",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "mcp": "node src/mcp/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "express": "^4.19.2",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5"
+  }
+}
