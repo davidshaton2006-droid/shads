@@ -103,7 +103,9 @@ async function getCampaignsForProject(projectId) {
         name: c.Name,
         status: c.Status,
         state: c.State,
-        dailyBudget: c.DailyBudget?.Amount ?? null,
+        // DailyBudget.Amount в Директ API v5 задаётся в микро-единицах валюты (1 ₽ = 1_000_000) —
+        // переводим в рубли для отображения, иначе дашборд показывает бюджет завышенным в 1e6 раз.
+        dailyBudget: c.DailyBudget?.Amount != null ? c.DailyBudget.Amount / 1_000_000 : null,
         spendToday: todayByCampaign[c.Id]?.cost ?? 0,
         spend7d: weekByCampaign[c.Id]?.cost ?? 0,
         dailySpend: week.map((date) => ({ date, spend: byDate[date] ?? 0 })),

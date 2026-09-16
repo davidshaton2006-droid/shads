@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SHADS — демо дашборда</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <div class="demo-banner">
+      🧪 Демо-режим: страница на GitHub Pages статическая, реального бэкенда (Supabase, Директ, VK) здесь нет — все данные поддельные и живут только в этом браузере.
+      Исходный код и рабочая версия: <a href="https://github.com/davidshaton2006-droid/shads" target="_blank" rel="noopener">github.com/davidshaton2006-droid/shads</a>.
+      <button class="reset-link" onclick="resetDemoData()">Сбросить демо-данные</button>
+    </div>
+
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="mark">SHADS</span>
+        <span class="tagline">Яндекс.Директ / VK Ads</span>
+      </div>
+
+      <button class="nav-btn" id="navOverview" onclick="showOverview()">📊 &nbsp;Обзор</button>
+
+      <div>
+        <div class="sidebar-section-label">Проекты</div>
+        <div class="project-list" id="projects"></div>
+      </div>
+
+      <form class="new-project-form" id="newProjectForm" onsubmit="return handleCreateProject(event)">
+        <div>
+          <label class="field-label">Название проекта/клиента</label>
+          <input name="name" placeholder="Например, «Мебельный магазин»" required />
+        </div>
+        <div>
+          <label class="field-label">Цель</label>
+          <select name="goal_type">
+            <option value="cpa">CPA</option>
+            <option value="roas">ROAS</option>
+            <option value="leads">Лиды</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-label">Дневной лимит бюджета, ₽</label>
+          <input name="daily_budget_limit" type="number" min="0" step="1" placeholder="1000" required />
+          <div class="hint-block">Продублируйте тот же лимит в настройках Директа/VK.</div>
+        </div>
+        <button type="submit" class="full-width">+ Новый проект</button>
+      </form>
+    </aside>
+
+    <main id="main"></main>
+  </div>
+
+<script src="demo-data.js"></script>
+<script>
+let currentProjectId = null;
+let currentView = 'overview'; // 'overview' | 'project'
+
+// Единственное отличие демо-версии от реального дашборда (src/dashboard/public/index.html):
+// api() ходит в mockApi() (docs/demo-data.js, в памяти + localStorage) вместо fetch('/api...'),
+// потому что GitHub Pages не может запустить Express/Supabase-бэкенд. Вся остальная разметка и
+// логика рендера — один в один с рабочей версией.
+async function api(path, opts) {
+  return mockApi(path, opts);
+}
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function formatMoney(n) {
+  return Number(n ?? 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
+}
+
+function statusLabel(status) {
+  return { active: 'активен', paused: 'на паузе', archived: 'архив' }[status] ?? status;
+}
+
+const RISK_LABEL = { high: 'High risk', medium: 'Medium', low: 'Low risk' };
+const RISK_ICON = { high: '⛔', medium: '⚠️', low: '✓' };
+
+function riskBadge(riskLevel) {
+  return `<span class="risk-badge ${riskLevel}">${RISK_ICON[riskLevel] ?? ''} ${RISK_LABEL[riskLevel] ?? riskLevel}</span>`;
+}
+
+function emptyState(icon, title, hint) {
+  return `<div class="empty-state"><div class="icon">${icon}</div><div class="title">${title}</div><div class="hint">${hint}</div></div>`;
+}
+
+// ---------- Навигация ----------
+
+async function loadProjects() {
+  const projects = await api('/projects');
+  const el = document.getElementById('projects');
+  el.innerHTML = projects.map(p => `
+    <div class="project-item ${currentView === 'project' && p.id === currentProjectId ? 'active' : ''}" onclick="selectProject('${p.id}')">
+      <span class="dot ${p.status}"></span>
+      <span class="name">${escapeHtml(p.name)}</span>
+    </div>
+  `).join('') || '<div class="text-faint" style="padding:8px 10px;font-size:12.5px;">Пока нет проектов</div>';
+  return projects;
+}
+
+function setActiveNav() {
+  document.getElementById('navOverview').classList.toggle('active', currentView === 'overview');
+}
+
+async function showOverview() {
+  currentView = 'overview';
+  currentProjectId = null;
+  setActiveNav();
+  loadProjects();
+  await renderOverview();
+}
+
+async function selectProject(id) {
+  currentView = 'project';
+  currentProjectId = id;
+  setActiveNav();
+  loadProjects();
+  await renderProjectDetail(id);
+}
+
+async function handleCreateProject(event) {
+  event.preventDefault();
+  const form = event.target;
+  const name = form.name.value.trim();
+  const goal_type = form.goal_type.value;
+  const daily_budget_limit = Number(form.daily_budget_limit.value);
+  if (!name || !daily_budget_limit) return false;
+
+  await api('/projects', { method: 'POST', body: JSON.stringify({ name, goal_type, daily_budget_limit }) });
+  form.reset();
+  if (currentView === 'overview') renderOverview();
+  loadProjects();
+  return false;
+}
+
+// ---------- Обзорный экран ----------
+
+async function renderOverview() {
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="page-header">
+      <h1>Обзор</h1>
+      <div class="subtitle">Ситуация по всем проектам с одного взгляда</div>
+    </div>
+    <div id="overviewGrid" class="overview-grid"></div>
+  `;
+
+  let overview;
+  try {
+    overview = await api('/overview');
+  } catch (err) {
+    document.getElementById('overviewGrid').innerHTML = emptyState('⚠️', 'Не удалось загрузить обзор', String(err.message ?? err));
+    return;
+  }
+
+  const grid = document.getElementById('overviewGrid');
+  if (!overview.length) {
+    grid.innerHTML = emptyState('🗂️', 'Пока нет проектов', 'Добавьте первый проект через форму слева, чтобы начать вести рекламу.');
+    return;
+  }
+
+  grid.innerHTML = overview.map(p => {
+    const pct = p.dailyBudgetLimit ? Math.min(100, Math.round((p.spendToday / p.dailyBudgetLimit) * 100)) : 0;
+    const over = p.dailyBudgetLimit && p.spendToday > p.dailyBudgetLimit;
+    return `
+      <div class="project-card" onclick="selectProject('${p.id}')">
+        <div class="project-card-top">
+          <div class="project-card-name">${escapeHtml(p.name)}</div>
+          <span class="status-badge ${p.status}">${statusLabel(p.status)}</span>
+        </div>
+        <div class="spend-row">
+          <div class="numbers">
+            <span>Расход сегодня</span>
+            <span><strong>${formatMoney(p.spendToday)} ₽</strong> из ${formatMoney(p.dailyBudgetLimit)} ₽</span>
+          </div>
+          <div class="progress-track"><div class="progress-fill ${over ? 'over' : ''}" style="width:${pct}%"></div></div>
+        </div>
+        <div class="project-card-footer">
+          <span>${p.campaignCount} ${p.campaignCount === 1 ? 'кампания' : 'кампаний'}</span>
+          ${p.pendingCount > 0
+            ? `<span class="pending-flag">⏳ ${p.pendingCount} ждут подтверждения</span>`
+            : `<span class="text-faint">Нет ожидающих действий</span>`}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ---------- Мини-график расхода за 7 дней ----------
+
+function spendChart(dailySpend) {
+  if (!dailySpend || !dailySpend.length) return '<span class="text-faint">—</span>';
+  const max = Math.max(...dailySpend.map(d => d.spend), 1);
+  const bars = dailySpend.map(d => {
+    const h = Math.max(2, Math.round((d.spend / max) * 36));
+    const label = `${d.date}: ${formatMoney(d.spend)} ₽`;
+    return `<div class="bar" style="height:${h}px" title="${label}"></div>`;
+  }).join('');
+  return `<div class="spend-chart">${bars}</div>`;
+}
+
+// ---------- Экран проекта ----------
+
+async function renderProjectDetail(id) {
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="text-faint">Загрузка…</div>`;
+
+  const [campaigns, pending, log, stopEvents, actionSettings, actionTypes] = await Promise.all([
+    api(`/projects/${id}/campaigns`).catch(err => { console.error(err); return []; }),
+    api(`/projects/${id}/pending-actions`),
+    api(`/projects/${id}/action-log`),
+    api(`/projects/${id}/stop-events`),
+    api(`/projects/${id}/action-settings`),
+    api('/action-types'),
+  ]);
+
+  const settingsMap = Object.fromEntries(actionSettings.map(s => [s.action_key, s.requires_confirmation]));
+  const pendingOpen = pending.filter(p => p.status === 'pending');
+
+  main.innerHTML = `
+    <div class="page-header">
+      <h1>Проект</h1>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Подключения</span></div>
+      <div class="connections-row">
+        <button class="secondary" disabled title="В демо-режиме недоступно — нужен живой бэкенд с OAuth">Подключить Яндекс</button>
+        <button class="secondary" disabled title="В демо-режиме недоступно — нужен живой бэкенд с OAuth">Подключить VK Ads</button>
+      </div>
+      <div class="hint-block">В демо-версии на GitHub Pages OAuth недоступен — это статическая страница без бэкенда.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Кампании <span class="count">(${campaigns.length})</span></span></div>
+      ${campaigns.length ? `
+        <table>
+          <tr><th>Площадка</th><th>Название</th><th>Статус</th><th>Дневной бюджет</th><th>Сегодня</th><th>За 7 дней</th></tr>
+          ${campaigns.map(c => `
+            <tr>
+              <td>${c.provider === 'yandex_direct' ? 'Яндекс.Директ' : 'VK Ads'}</td>
+              <td>${escapeHtml(c.name ?? c.id)}</td>
+              <td><span class="status-chip">${escapeHtml(c.status)}${c.state ? ' / ' + escapeHtml(c.state) : ''}</span></td>
+              <td>${c.dailyBudget != null ? formatMoney(c.dailyBudget) + ' ₽' : '—'}</td>
+              <td>${formatMoney(c.spendToday)} ₽</td>
+              <td>${spendChart(c.dailySpend)}</td>
+            </tr>
+          `).join('')}
+        </table>
+      ` : emptyState('📭', 'Нет кампаний', 'Подключите Яндекс/VK выше или создайте кампанию через агента — здесь появится обзор расхода и статусов.')}
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Ожидают подтверждения <span class="count">(${pendingOpen.length})</span></span></div>
+      ${pending.length ? `
+        <table>
+          <tr><th>Действие</th><th>Риск</th><th>Провайдер</th><th>Payload</th><th>Обоснование</th><th>Статус</th><th></th></tr>
+          ${pending.map(p => {
+            const meta = actionTypes[p.action_key];
+            const risk = meta?.riskLevel ?? 'medium';
+            return `
+              <tr class="risk-row-${risk}">
+                <td>${escapeHtml(meta?.label ?? p.action_key)}</td>
+                <td>${riskBadge(risk)}</td>
+                <td>${p.provider}</td>
+                <td><span class="text-faint" style="font-size:12px;">${escapeHtml(JSON.stringify(p.payload))}</span></td>
+                <td><span class="text-muted" style="font-size:12.5px;">${escapeHtml(p.reasoning ?? '')}</span></td>
+                <td><span class="status-chip ${p.status}">${p.status}</span></td>
+                <td>${p.status === 'pending' ? `
+                  <div class="actions-cell">
+                    <button onclick="approve('${p.id}')">Подтвердить</button>
+                    <button class="reject" onclick="reject('${p.id}')">Отклонить</button>
+                  </div>
+                ` : ''}</td>
+              </tr>
+            `;
+          }).join('')}
+        </table>
+      ` : emptyState('✅', 'Нечего подтверждать', 'Здесь появятся действия агента, ожидающие вашего решения.')}
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Автономность типов действий</span></div>
+      <div class="hint-block" style="margin-bottom:10px;">По умолчанию всё требует подтверждения. High-risk действия отмечены явно — переключайте осознанно.</div>
+      <table>
+        ${Object.entries(actionTypes)
+          .sort((a, b) => (a[1].riskLevel === 'high' ? -1 : 1) - (b[1].riskLevel === 'high' ? -1 : 0))
+          .map(([key, meta]) => `
+            <tr class="risk-row-${meta.riskLevel}">
+              <td>${escapeHtml(meta.label)}</td>
+              <td>${riskBadge(meta.riskLevel)}</td>
+              <td>
+                <select onchange="setActionSetting('${key}', this.value === 'true')">
+                  <option value="true" ${settingsMap[key] !== false ? 'selected' : ''}>Требует подтверждения</option>
+                  <option value="false" ${settingsMap[key] === false ? 'selected' : ''}>Автономно</option>
+                </select>
+              </td>
+            </tr>
+          `).join('')}
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Стоп-краны — срабатывания</span></div>
+      ${stopEvents.length ? `
+        <table>
+          <tr><th>Правило</th><th>Значение</th><th>Когда</th></tr>
+          ${stopEvents.map(e => `<tr><td>${e.stop_rule_id}</td><td>${e.metric_value}</td><td>${new Date(e.triggered_at).toLocaleString('ru')}</td></tr>`).join('')}
+        </table>
+      ` : emptyState('🟢', 'Стоп-кран не срабатывал', 'Кампании ещё не останавливались автоматически по CPA или расходу без конверсий.')}
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Лог действий</span></div>
+      ${log.length ? `
+        <table>
+          <tr><th>Действие</th><th>Провайдер</th><th>Статус</th><th>Когда</th></tr>
+          ${log.map(l => `<tr><td>${escapeHtml(l.action_key)}</td><td>${l.provider}</td><td><span class="status-chip ${l.status}">${l.status}</span></td><td>${new Date(l.executed_at).toLocaleString('ru')}</td></tr>`).join('')}
+        </table>
+      ` : emptyState('🗒️', 'Пока пусто', 'Здесь будет история всех фактически выполненных действий агента.')}
+    </div>
+  `;
+}
+
+async function approve(id) { await api(`/pending-actions/${id}/approve`, { method: 'POST' }); renderProjectDetail(currentProjectId); }
+async function reject(id) { await api(`/pending-actions/${id}/reject`, { method: 'POST' }); renderProjectDetail(currentProjectId); }
+async function setActionSetting(actionKey, requiresConfirmation) {
+  await api(`/projects/${currentProjectId}/action-settings/${actionKey}`, { method: 'PUT', body: JSON.stringify({ requires_confirmation: requiresConfirmation }) });
+}
+
+showOverview();
+</script>
+</body>
+</html>
