@@ -18,6 +18,7 @@
       </div>
 
       <button class="nav-btn" id="navOverview" onclick="showOverview()">📊 &nbsp;Обзор</button>
+      <button class="nav-btn" id="navLeads" onclick="showLeads()">🎯 &nbsp;Поиск клиентов</button>
 
       <div>
         <div class="sidebar-section-label">Проекты</div>
@@ -51,7 +52,8 @@
 
 <script>
 let currentProjectId = null;
-let currentView = 'overview'; // 'overview' | 'project'
+let currentView = 'overview'; // 'overview' | 'project' | 'leads'
+let leadsStatusFilter = '';
 
 async function api(path, opts) {
   const res = await fetch('/api' + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -98,6 +100,7 @@ async function loadProjects() {
 
 function setActiveNav() {
   document.getElementById('navOverview').classList.toggle('active', currentView === 'overview');
+  document.getElementById('navLeads').classList.toggle('active', currentView === 'leads');
 }
 
 async function showOverview() {
@@ -182,6 +185,141 @@ async function renderOverview() {
       </div>
     `;
   }).join('');
+}
+
+// ---------- Поиск клиентов (лидген) ----------
+// Отправки сообщений здесь нет намеренно: кнопка «Скопировать» кладёт готовый текст+контакт
+// в буфер обмена, дальше владелец сам открывает Telegram/WhatsApp/почту и пишет от себя.
+// См. src/leadgen/ и обсуждение с владельцем про риски автоматической рассылки.
+
+const LEAD_STATUS_LABEL = {
+  new: 'Новый', drafted: 'Черновик готов', contacted: 'Написали', replied: 'Ответили',
+  client: 'Стал клиентом', rejected: 'Отказ', duplicate: 'Дубль',
+};
+const LEAD_CHANNEL_ICON = { telegram: '✈️ Telegram', whatsapp: '💬 WhatsApp', email: '✉️ Email', unknown: '❔ Контакт не найден' };
+
+async function showLeads() {
+  currentView = 'leads';
+  currentProjectId = null;
+  setActiveNav();
+  loadProjects();
+  await renderLeads();
+}
+
+async function renderLeads() {
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="page-header">
+      <h1>Поиск клиентов</h1>
+      <div class="subtitle">Находит компании в открытых источниках по нише/городу и готовит черновик сообщения. Отправка — вручную, из вашего Telegram/WhatsApp/почты.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Новый поиск</span></div>
+      <form id="leadSearchForm" onsubmit="return handleLeadSearch(event)" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;">
+        <div><label class="field-label">Ниша</label><input name="niche" placeholder="Ремонт квартир" required /></div>
+        <div><label class="field-label">Город</label><input name="city" placeholder="Краснодар" required /></div>
+        <div><label class="field-label">Источник</label>
+          <select name="source">
+            <option value="avito">Авито</option>
+            <option value="twogis">2ГИС</option>
+          </select>
+        </div>
+        <button type="submit">Искать</button>
+      </form>
+      <div class="hint-block" id="leadSearchHint" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Лиды <span class="count" id="leadsCount"></span></span>
+        <select onchange="leadsStatusFilter = this.value; renderLeads();" style="width:auto;">
+          <option value="">Все статусы</option>
+          ${Object.entries(LEAD_STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${leadsStatusFilter === k ? 'selected' : ''}>${v}</option>`).join('')}
+        </select>
+      </div>
+      <div id="leadsTable"><div class="text-faint">Загрузка…</div></div>
+    </div>
+  `;
+
+  const leads = await api('/leads' + (leadsStatusFilter ? `?status=${leadsStatusFilter}` : ''));
+  document.getElementById('leadsCount').textContent = `(${leads.length})`;
+  const table = document.getElementById('leadsTable');
+
+  if (!leads.length) {
+    table.innerHTML = emptyState('🎯', 'Пока нет лидов', 'Запустите поиск выше по нише и городу — за раз обрабатывается до 15 объявлений/карточек.');
+    return;
+  }
+
+  table.innerHTML = `
+    <table>
+      <tr><th>Компания</th><th>Ниша / город</th><th>Контакт</th><th>Черновик</th><th>Статус</th><th></th></tr>
+      ${leads.map(l => `
+        <tr>
+          <td>${escapeHtml(l.company_name)}<br/><a href="${l.source_url}" target="_blank" class="text-faint" style="font-size:11px;">источник: ${l.source}</a></td>
+          <td>${escapeHtml(l.niche)}<br/><span class="text-faint">${escapeHtml(l.city)}</span></td>
+          <td>${l.contact_value ? `${LEAD_CHANNEL_ICON[l.contact_channel] ?? l.contact_channel}<br/><span class="text-muted" style="font-size:12px;">${escapeHtml(l.contact_value)}</span>` : `<span class="text-faint">${LEAD_CHANNEL_ICON.unknown}</span>`}</td>
+          <td style="max-width:320px;"><span style="font-size:12.5px;">${escapeHtml((l.draft_message ?? '').slice(0, 160))}${(l.draft_message ?? '').length > 160 ? '…' : ''}</span></td>
+          <td>
+            <select onchange="setLeadStatus('${l.id}', this.value)">
+              ${Object.entries(LEAD_STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${l.status === k ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <div class="actions-cell">
+              <button class="secondary" onclick="copyLeadDraft('${l.id}')">Копировать</button>
+              <button class="secondary" onclick="regenLeadDraft('${l.id}')">Другой черновик</button>
+            </div>
+          </td>
+        </tr>
+      `).join('')}
+    </table>
+  `;
+
+  window.__leads = Object.fromEntries(leads.map(l => [l.id, l]));
+}
+
+async function handleLeadSearch(event) {
+  event.preventDefault();
+  const form = event.target;
+  const niche = form.niche.value.trim();
+  const city = form.city.value.trim();
+  const source = form.source.value;
+  if (!niche || !city) return false;
+
+  const hint = document.getElementById('leadSearchHint');
+  hint.textContent = 'Ищу и готовлю черновики — это может занять минуту...';
+  try {
+    const found = await api('/leads/search', { method: 'POST', body: JSON.stringify({ niche, city, source, limit: 15 }) });
+    hint.textContent = `Готово: найдено новых лидов — ${found.length}.`;
+  } catch (err) {
+    hint.textContent = 'Ошибка поиска: ' + (err.message ?? err);
+  }
+  await renderLeads();
+  return false;
+}
+
+async function setLeadStatus(id, status) {
+  await api(`/leads/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+}
+
+async function copyLeadDraft(id) {
+  const lead = window.__leads?.[id];
+  if (!lead) return;
+  const text = `${lead.draft_message ?? ''}${lead.contact_value ? `\n\n[${lead.contact_channel}: ${lead.contact_value}]` : ''}`;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // буфер обмена может быть недоступен без HTTPS/разрешения — показываем текст для ручного копирования
+    prompt('Скопируйте текст вручную:', text);
+  }
+  await setLeadStatus(id, 'contacted');
+  renderLeads();
+}
+
+async function regenLeadDraft(id) {
+  await api(`/leads/${id}/regenerate-draft`, { method: 'POST' });
+  renderLeads();
 }
 
 // ---------- Мини-график расхода за 7 дней ----------

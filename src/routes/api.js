@@ -5,8 +5,50 @@ const { ACTION_TYPES } = require('../guardrails/actionTypes');
 const direct = require('../providers/yandexDirect');
 const vk = require('../providers/vkAds');
 const { buildCampaignDefinition } = require('../mcp/tools/yandex');
+const leadgen = require('../leadgen/service');
 
 const router = express.Router();
+
+// ---------- Лидген (см. src/leadgen/) ----------
+// Отправки здесь нет и не будет намеренно: дашборд отдаёт готовый черновик + контакт,
+// владелец сам копирует и пишет из своего Telegram/WhatsApp/почты.
+
+router.get('/leads', async (req, res) => {
+  try {
+    const { owner_id, status, niche, city } = req.query;
+    res.json(await leadgen.listLeads({ ownerId: owner_id, status, niche, city }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/leads/search', async (req, res) => {
+  try {
+    const { owner_id, niche, city, source, limit } = req.body;
+    const leads = await leadgen.findLeads({ ownerId: owner_id, niche, city, source, limit });
+    res.json(leads);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/leads/:id', async (req, res) => {
+  try {
+    const patch = { ...req.body };
+    if (patch.status === 'contacted' && !patch.contacted_at) patch.contacted_at = new Date().toISOString();
+    res.json(await leadgen.updateLead(req.params.id, patch));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/leads/:id/regenerate-draft', async (req, res) => {
+  try {
+    res.json(await leadgen.regenerateDraft(req.params.id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/projects', async (req, res) => {
   const { data, error } = await getSupabase().from('projects').select('*').order('created_at', { ascending: false });
