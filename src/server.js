@@ -5,10 +5,12 @@ const cookieParser = require('cookie-parser');
 const oauthRoutes = require('./routes/oauth');
 const apiRoutes = require('./routes/api');
 const { runStopCranForAllProjects } = require('./guardrails/stopCranRunner');
+const { requireAuth } = require('./middleware/auth');
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use(requireAuth); // до всех роутов и статики: дашборд, /api и /oauth закрыты авторизацией
 
 app.use('/oauth', oauthRoutes);
 app.use('/api', apiRoutes);

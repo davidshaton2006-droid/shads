@@ -6,6 +6,7 @@ const direct = require('../providers/yandexDirect');
 const vk = require('../providers/vkAds');
 const { buildCampaignDefinition } = require('../mcp/tools/yandex');
 const leadgen = require('../leadgen/service');
+const { getOwnerId } = require('../lib/owner');
 
 const router = express.Router();
 
@@ -24,8 +25,8 @@ router.get('/leads', async (req, res) => {
 
 router.post('/leads/search', async (req, res) => {
   try {
-    const { owner_id, niche, city, source, limit } = req.body;
-    const leads = await leadgen.findLeads({ ownerId: owner_id, niche, city, source, limit });
+    const { niche, city, source, limit } = req.body;
+    const leads = await leadgen.findLeads({ ownerId: await getOwnerId(), niche, city, source, limit });
     res.json(leads);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -57,14 +58,19 @@ router.get('/projects', async (req, res) => {
 });
 
 router.post('/projects', async (req, res) => {
-  const { name, goal_type, goal_value, daily_budget_limit, currency, owner_id } = req.body;
-  const { data, error } = await getSupabase()
-    .from('projects')
-    .insert({ name, goal_type, goal_value, daily_budget_limit, currency: currency ?? 'RUB', owner_id })
-    .select()
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const { name, goal_type, goal_value, daily_budget_limit, currency } = req.body;
+    const owner_id = await getOwnerId();
+    const { data, error } = await getSupabase()
+      .from('projects')
+      .insert({ name, goal_type, goal_value, daily_budget_limit, currency: currency ?? 'RUB', owner_id })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/action-types', (req, res) => {
