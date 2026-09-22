@@ -1,0 +1,25 @@
+name: Stop-cran keep-alive
+
+# Бесплатный хостинг (Render free tier) усыпляет процесс после ~15 минут простоя — фоновый
+# setInterval внутри сервера (src/server.js) тогда не срабатывает. Этот cron будит сервер и
+# запускает проверку стоп-крана снаружи через POST /api/internal/stop-cran.
+#
+# Расписание раз в 10 минут — сам GitHub Actions cron не гарантирует точность и может запускать
+# с задержкой в периоды нагрузки, это ожидаемо и не критично для данной защиты.
+#
+# Нужны repo secrets: SHADS_URL (https://<ваш-сервис>.onrender.com), DASHBOARD_USER,
+# DASHBOARD_PASSWORD — Settings → Secrets and variables → Actions в репозитории на GitHub.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger stop-cran check
+        run: |
+          curl -sf -u "${{ secrets.DASHBOARD_USER }}:${{ secrets.DASHBOARD_PASSWORD }}" \
+            -X POST "${{ secrets.SHADS_URL }}/api/internal/stop-cran"

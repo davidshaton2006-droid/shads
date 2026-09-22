@@ -63,6 +63,26 @@ src/
   нужно заново пройти OAuth.
 - **CI**: `.github/workflows/test.yml` гоняет `npm test` при каждом push и PR.
 
+## Деплой на бесплатный хостинг (Render)
+
+Дашборд можно открыть с телефона/откуда угодно, задеплоив на Render (Web Service, бесплатный
+план). Ограничение бесплатного плана — процесс засыпает после ~15 минут без запросов, из-за
+этого фоновый `setInterval` в `src/server.js` (стоп-кран раз в 5 минут) не сработает, пока сервер
+спит. Решение — внешний будильник:
+
+1. На Render: New → Web Service → подключить репозиторий `davidshaton2006-droid/shads`.
+   Build command: `npm install`. Start command: `node src/server.js`.
+2. В Render добавить все переменные из `.env` (кроме `PORT` — Render задаёт его сам).
+   **Важно**: `YANDEX_REDIRECT_URI` должен указывать на публичный адрес Render
+   (`https://<ваш-сервис>.onrender.com/oauth/yandex/callback`), не на `localhost` — и этот же
+   адрес нужно добавить вторым Redirect URI в настройках OAuth-приложения на oauth.yandex.ru
+   (можно оставить и localhost для локальной разработки, поле поддерживает несколько адресов).
+3. В GitHub репозитории: Settings → Secrets and variables → Actions → добавить `SHADS_URL`
+   (публичный адрес с шага 2), `DASHBOARD_USER`, `DASHBOARD_PASSWORD` (те же значения, что в
+   `.env`/на Render).
+4. `.github/workflows/stop-cran-cron.yml` раз в 10 минут будит сервер и запускает проверку через
+   `POST /api/internal/stop-cran` (защищён той же Basic Auth, что и весь дашборд).
+
 ## Плейбуки — обязательная часть логики агента
 
 `skills/yandex-direct-playbook.md` и `skills/vk-ads-playbook.md` — не просто документация.

@@ -7,8 +7,22 @@ const vk = require('../providers/vkAds');
 const { buildCampaignDefinition } = require('../mcp/tools/yandex');
 const leadgen = require('../leadgen/service');
 const { getOwnerId } = require('../lib/owner');
+const { runStopCranForAllProjects } = require('../guardrails/stopCranRunner');
 
 const router = express.Router();
+
+// Бесплатный хостинг усыпляет процесс после простоя — фоновый setInterval в server.js тогда не
+// срабатывает. Этот эндпоинт даёт внешнему планировщику (GitHub Actions cron, см.
+// .github/workflows/stop-cran-cron.yml) разбудить сервер и прогнать проверку вручную. Защищён
+// той же Basic Auth, что и весь /api (см. src/middleware/auth.js) — отдельного секрета не заводим.
+router.post('/internal/stop-cran', async (req, res) => {
+  try {
+    await runStopCranForAllProjects();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ---------- Лидген (см. src/leadgen/) ----------
 // Отправки здесь нет и не будет намеренно: дашборд отдаёт готовый черновик + контакт,
