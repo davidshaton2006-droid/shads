@@ -82,12 +82,54 @@ test('suspendCampaign пробрасывает ошибку Директа с к
   }
 });
 
-test('getCampaigns по-прежнему шлёт operation="campaigns" (без операции suspend/resume) — регресс на существующее поведение', async () => {
+// Раньше operation по умолчанию совпадала с именем сервиса (напр. method:"campaigns") — на
+// живом API это давало [55] "Операция не найдена". Подтверждено вживую после одобрения доступа
+// к API: правильная операция для чтения — 'get'. Регресс-тесты ниже фиксируют исправленное
+// поведение для всех read-методов и для updateKeywordBids (который слал method:"bids" вместо "set").
+
+test('getCampaigns шлёт method="get" на сервис campaigns', async () => {
   const { calls, restore } = mockFetchOnce({ result: { Campaigns: [{ Id: 1 }] } });
   try {
     await direct.getCampaigns('project-1');
+    assert.equal(calls[0].url, 'https://api.direct.yandex.com/json/v5/campaigns');
+    assert.equal(JSON.parse(calls[0].options.body).method, 'get');
+  } finally {
+    restore();
+  }
+});
+
+test('getAdGroups шлёт method="get" на сервис adgroups', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { AdGroups: [] } });
+  try {
+    await direct.getAdGroups('project-1', [1, 2]);
+    assert.equal(calls[0].url, 'https://api.direct.yandex.com/json/v5/adgroups');
     const body = JSON.parse(calls[0].options.body);
-    assert.equal(body.method, 'campaigns');
+    assert.equal(body.method, 'get');
+    assert.deepEqual(body.params.SelectionCriteria, { CampaignIds: [1, 2] });
+  } finally {
+    restore();
+  }
+});
+
+test('getKeywords шлёт method="get" на сервис keywords', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { Keywords: [] } });
+  try {
+    await direct.getKeywords('project-1', [10]);
+    assert.equal(calls[0].url, 'https://api.direct.yandex.com/json/v5/keywords');
+    assert.equal(JSON.parse(calls[0].options.body).method, 'get');
+  } finally {
+    restore();
+  }
+});
+
+test('updateKeywordBids шлёт method="set" на сервис bids', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { SetResults: [{ KeywordId: 1 }] } });
+  try {
+    await direct.updateKeywordBids('project-1', [{ KeywordId: 1, Bid: 50000000 }]);
+    assert.equal(calls[0].url, 'https://api.direct.yandex.com/json/v5/bids');
+    const body = JSON.parse(calls[0].options.body);
+    assert.equal(body.method, 'set');
+    assert.deepEqual(body.params, { Bids: [{ KeywordId: 1, Bid: 50000000 }] });
   } finally {
     restore();
   }

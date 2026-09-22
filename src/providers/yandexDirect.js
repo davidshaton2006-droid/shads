@@ -78,16 +78,20 @@ function parseTsvReport(tsv) {
 }
 
 // --- read ---
+// Операция всегда 'get' явно — раньше полагались на дефолт operation=service, который для
+// чтения оказался неверным (подтверждено вживую: Директ отвечал [55] "Операция не найдена",
+// пока метод в теле запроса совпадал с именем сервиса вместо 'get').
 const getCampaigns = (projectId, params = {}) =>
-  callMethod(projectId, 'campaigns', { SelectionCriteria: {}, FieldNames: ['Id', 'Name', 'Status', 'State', 'DailyBudget'], ...params });
+  callMethod(projectId, 'campaigns', { SelectionCriteria: {}, FieldNames: ['Id', 'Name', 'Status', 'State', 'DailyBudget'], ...params }, 'get');
 
 const getAdGroups = (projectId, campaignIds) =>
-  callMethod(projectId, 'adgroups', { SelectionCriteria: { CampaignIds: campaignIds }, FieldNames: ['Id', 'Name', 'CampaignId', 'Status'] });
+  callMethod(projectId, 'adgroups', { SelectionCriteria: { CampaignIds: campaignIds }, FieldNames: ['Id', 'Name', 'CampaignId', 'Status'] }, 'get');
 
 const getKeywords = (projectId, adGroupIds) =>
-  callMethod(projectId, 'keywords', { SelectionCriteria: { AdGroupIds: adGroupIds }, FieldNames: ['Id', 'Keyword', 'AdGroupId', 'Bid', 'Status'] });
+  callMethod(projectId, 'keywords', { SelectionCriteria: { AdGroupIds: adGroupIds }, FieldNames: ['Id', 'Keyword', 'AdGroupId', 'Bid', 'Status'] }, 'get');
 
-const getKeywordsStats = (projectId, reportDefinition) => callMethod(projectId, 'reports', reportDefinition);
+/** Reports API — отдельный протокол (см. requestReport), не {method,params} — переиспользуем его. */
+const getKeywordsStats = (projectId, reportDefinition) => requestReport(projectId, reportDefinition);
 
 /**
  * Отчёт CAMPAIGN_PERFORMANCE_REPORT за период — расход и конверсии по кампаниям, с разбивкой по
@@ -119,7 +123,8 @@ async function getCampaignPerformanceReport(projectId, { campaignIds, dateFrom, 
 }
 
 // --- write (все вызываются ТОЛЬКО после preflight/requestAction в MCP-слое) ---
-const updateKeywordBids = (projectId, bids) => callMethod(projectId, 'bids', { SetAuto: undefined, Bids: bids });
+// Bids service, операция 'set' — явные ставки по ключевым фразам (в отличие от 'setAuto').
+const updateKeywordBids = (projectId, bids) => callMethod(projectId, 'bids', { Bids: bids }, 'set');
 
 const addNegativeKeywords = (projectId, campaignId, negativeKeywords) =>
   callMethod(projectId, 'campaigns', { Campaigns: [{ Id: campaignId, NegativeKeywords: { Items: negativeKeywords } }] }, 'update');
