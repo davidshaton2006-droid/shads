@@ -66,10 +66,52 @@ function extractDescription(html) {
  * @param {string} city - например "Краснодар"
  * @param {number} limit - сколько объявлений максимум обработать за один запуск (держите 10-20)
  */
+// Авито использует латинские слаги городов в пути URL (/moskva?q=...), кириллица даёт 404.
+// Слаги крупных городов заданы явно (у части есть дефисы/подчёркивания, транслитерацией их не
+// угадать); для остальных используется приблизительная транслитерация — если город не находится
+// (404), добавьте его сюда.
+const AVITO_CITY_SLUGS = {
+  москва: 'moskva',
+  'санкт-петербург': 'sankt-peterburg',
+  петербург: 'sankt-peterburg',
+  краснодар: 'krasnodar',
+  екатеринбург: 'ekaterinburg',
+  новосибирск: 'novosibirsk',
+  казань: 'kazan',
+  'нижний новгород': 'nizhniy_novgorod',
+  самара: 'samara',
+  уфа: 'ufa',
+  челябинск: 'chelyabinsk',
+  'ростов-на-дону': 'rostov-na-donu',
+  воронеж: 'voronezh',
+  пермь: 'perm',
+  волгоград: 'volgograd',
+  красноярск: 'krasnoyarsk',
+  омск: 'omsk',
+  сочи: 'sochi',
+  тюмень: 'tyumen',
+  саратов: 'saratov',
+};
+
+const TRANSLIT = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l',
+  м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch',
+  ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
+function cityToAvitoSlug(city) {
+  const key = city.trim().toLowerCase();
+  if (AVITO_CITY_SLUGS[key]) return AVITO_CITY_SLUGS[key];
+  return key
+    .split('')
+    .map((ch) => (TRANSLIT[ch] !== undefined ? TRANSLIT[ch] : ch))
+    .join('')
+    .replace(/\s+/g, '_');
+}
+
 async function searchAvito(niche, city, limit = 15) {
   const query = encodeURIComponent(niche);
-  const cityForUrl = encodeURIComponent(city.toLowerCase().replace(/\s+/g, '_'));
-  const searchUrl = `https://www.avito.ru/${cityForUrl}?q=${query}`;
+  const searchUrl = `https://www.avito.ru/${encodeURIComponent(cityToAvitoSlug(city))}?q=${query}`;
 
   const searchHtml = await fetchHtml(searchUrl);
   const listingUrls = extractListingLinks(searchHtml, limit);
@@ -99,4 +141,4 @@ async function searchAvito(niche, city, limit = 15) {
   return leads;
 }
 
-module.exports = { searchAvito };
+module.exports = { searchAvito, cityToAvitoSlug };

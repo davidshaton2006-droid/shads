@@ -13,12 +13,23 @@ require.cache[connectionsPath] = {
   },
 };
 
+// providers/yandexDirect.js ходит к Яндексу через yandexFetch (src/lib/network.js), а не через
+// глобальный fetch — см. комментарий в network.js: глобальный fetch/dispatcher трогать нельзя,
+// это ломает decompression у @supabase/supabase-js. Поэтому мокаем сам network.js.
+let currentYandexFetch;
+const networkPath = require.resolve('../src/lib/network');
+require.cache[networkPath] = {
+  id: networkPath,
+  filename: networkPath,
+  loaded: true,
+  exports: { yandexFetch: (...args) => currentYandexFetch(...args) },
+};
+
 const direct = require('../src/providers/yandexDirect');
 
 function mockFetchOnce(responseBody, status = 200) {
   const calls = [];
-  const originalFetch = global.fetch;
-  global.fetch = async (url, options) => {
+  currentYandexFetch = async (url, options) => {
     calls.push({ url, options });
     return {
       ok: status >= 200 && status < 300,
@@ -27,7 +38,7 @@ function mockFetchOnce(responseBody, status = 200) {
       text: async () => JSON.stringify(responseBody),
     };
   };
-  return { calls, restore: () => { global.fetch = originalFetch; } };
+  return { calls, restore: () => {} };
 }
 
 test('suspendCampaign вызывает Campaigns.suspend с SelectionCriteria.Ids, а не campaigns.get', async () => {

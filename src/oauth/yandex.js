@@ -1,5 +1,6 @@
 const { encryptToken } = require('../lib/encryption');
 const { getSupabase } = require('../lib/supabase');
+const { yandexFetch } = require('../lib/network');
 
 // Яндекс OAuth (oauth.yandex.ru) — один флоу выдаёт токен, годный и для Директа, и для Метрики,
 // если оба scope запрошены при регистрации приложения на oauth.yandex.ru.
@@ -16,7 +17,7 @@ function getAuthorizeUrl(state) {
 }
 
 async function exchangeCodeForToken(code) {
-  const res = await fetch('https://oauth.yandex.ru/token', {
+  const res = await yandexFetch('https://oauth.yandex.ru/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -31,7 +32,7 @@ async function exchangeCodeForToken(code) {
 }
 
 async function refreshAccessToken(refreshToken) {
-  const res = await fetch('https://oauth.yandex.ru/token', {
+  const res = await yandexFetch('https://oauth.yandex.ru/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

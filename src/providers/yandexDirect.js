@@ -1,4 +1,5 @@
 const { getAccessToken } = require('../lib/connections');
+const { yandexFetch } = require('../lib/network');
 
 // Тонкая обёртка над Яндекс.Директ API v5 (JSON). Доки: https://yandex.ru/dev/direct/doc/ref-v5/concepts/about.html
 // Каждый метод — один вызов метода API. Бизнес-правила (когда можно менять ставку, стратегию и т.д.)
@@ -22,7 +23,7 @@ async function callMethod(projectId, service, params, operation = service) {
   };
   if (externalAccountId) headers['Client-Login'] = externalAccountId;
 
-  const res = await fetch(`${API_URL}/${service}`, {
+  const res = await yandexFetch(`${API_URL}/${service}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ method: operation, params }),
@@ -52,7 +53,7 @@ async function requestReport(projectId, reportDefinition) {
   };
   if (externalAccountId) headers['Client-Login'] = externalAccountId;
 
-  const res = await fetch(`${API_URL}/reports`, {
+  const res = await yandexFetch(`${API_URL}/reports`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ params: reportDefinition }),
