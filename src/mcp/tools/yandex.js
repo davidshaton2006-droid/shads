@@ -8,15 +8,19 @@ const projectIdProp = { projectId: { type: 'string', description: 'UUID прое
  * Поиск и РСЯ — всегда разные кампании (плейбук, раздел 1). Тип обязателен и без дефолта —
  * агент не может создать кампанию, "забыв" его указать. type='SEARCH' отключает показы в сетях,
  * type='RSYA' — оставляет только сетевые показы, поисковая выдача не участвует.
- * TODO: сверить точный состав BiddingStrategy с документацией Campaigns.add перед live-вызовом
- * (см. комментарий в src/providers/yandexDirect.js).
+ * StartDate — Campaigns.add требует его явно (подтверждено вживую: без поля Директ отвечает
+ * [8000] "В элементе массива Campaigns отсутствует обязательное поле StartDate"), по умолчанию —
+ * сегодняшняя дата, можно передать позже для отложенного старта.
+ * TODO: сверить точный состав BiddingStrategy с документацией Campaigns.add перед следующим
+ * live-вызовом — HIGHEST_POSITION уже проверен и работает, но не все варианты стратегии.
  */
-function buildCampaignDefinition({ name, type, dailyBudgetMicros }) {
+function buildCampaignDefinition({ name, type, dailyBudgetMicros, startDate }) {
   if (type !== 'SEARCH' && type !== 'RSYA') {
     throw new Error(`Тип кампании должен быть явно указан как 'SEARCH' или 'RSYA' (плейбук, раздел 1), получено: ${type}`);
   }
   return {
     Name: name,
+    StartDate: startDate ?? new Date().toISOString().slice(0, 10),
     DailyBudget: { Amount: dailyBudgetMicros, Mode: 'STANDARD' },
     TextCampaign: {
       BiddingStrategy: {
