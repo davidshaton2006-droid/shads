@@ -156,8 +156,12 @@ const resumeCampaign = (projectId, campaignId) =>
  */
 const createCampaign = (projectId, campaignDefinition) => callMethod(projectId, 'campaigns', { Campaigns: [campaignDefinition] }, 'add');
 
-const createAdGroup = (projectId, campaignId, name) =>
-  callMethod(projectId, 'adgroups', { AdGroups: [{ Name: name, CampaignId: campaignId }] }, 'add');
+// RegionIds обязателен (подтверждено вживую: [8000] "отсутствует обязательное поле RegionIds").
+// 225 — geo-id "Россия" (без него Директ вообще не знает, где показывать объявления группы).
+// Дефолт задан здесь, а не только в MCP-инструменте, чтобы работать и для уже поставленных в
+// очередь заявок, чей payload был сохранён до этого фикса и regionIds не содержит.
+const createAdGroup = (projectId, campaignId, name, regionIds = [225]) =>
+  callMethod(projectId, 'adgroups', { AdGroups: [{ Name: name, CampaignId: campaignId, RegionIds: regionIds }] }, 'add');
 
 const addKeywords = (projectId, adGroupId, keywordTexts) =>
   callMethod(projectId, 'keywords', { Keywords: keywordTexts.map((k) => ({ AdGroupId: adGroupId, Keyword: k })) }, 'add');

@@ -134,3 +134,29 @@ test('updateKeywordBids шлёт method="set" на сервис bids', async () 
     restore();
   }
 });
+
+// Регресс: AdGroups.add реально падает с [8000] "отсутствует обязательное поле RegionIds", если
+// его не передать — обнаружено вживую. Дефолт (Россия, geo-id 225) задан в самом провайдере,
+// чтобы работать и для заявок, поставленных в очередь до этого фикса (их payload не содержит regionIds).
+test('createAdGroup всегда шлёт RegionIds — по умолчанию [225] (Россия)', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { AddResults: [{ Id: 1 }] } });
+  try {
+    await direct.createAdGroup('project-1', 999, 'Тестовая группа');
+    const body = JSON.parse(calls[0].options.body);
+    assert.equal(body.method, 'add');
+    assert.deepEqual(body.params.AdGroups[0].RegionIds, [225]);
+  } finally {
+    restore();
+  }
+});
+
+test('createAdGroup принимает явный regionIds вместо дефолта', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { AddResults: [{ Id: 1 }] } });
+  try {
+    await direct.createAdGroup('project-1', 999, 'Тестовая группа', [1, 2, 3]);
+    const body = JSON.parse(calls[0].options.body);
+    assert.deepEqual(body.params.AdGroups[0].RegionIds, [1, 2, 3]);
+  } finally {
+    restore();
+  }
+});
