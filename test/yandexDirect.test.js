@@ -198,3 +198,23 @@ test('createCallouts шлёт AdExtensions с Callout.CalloutText на серв�
     restore();
   }
 });
+
+// Регресс: Директ реально отвечал [8000] "неизвестный параметр TextAd.SitelinksSetId" — поле
+// называется SitelinkSetId (без "s" в середине), а не SitelinksSetId; для уточнений — не
+// CalloutIds, а общее поле AdExtensionIds. Входной контракт MCP-инструмента (extensions.sitelinksSetId/
+// calloutIds) не переименовывался — меняется только маппинг на реальные поля Директа внутри createAds.
+test('createAds маппит extensions в правильные поля Директа (SitelinkSetId, AdExtensionIds)', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { AddResults: [{ Id: 1 }] } });
+  try {
+    await direct.createAds('project-1', 999, [
+      { title: 'Заголовок', text: 'Текст', href: 'https://example.com', extensions: { sitelinksSetId: 111, calloutIds: [222, 333] } },
+    ]);
+    const body = JSON.parse(calls[0].options.body);
+    assert.equal(body.params.Ads[0].TextAd.SitelinkSetId, 111);
+    assert.deepEqual(body.params.Ads[0].TextAd.AdExtensionIds, [222, 333]);
+    assert.equal(body.params.Ads[0].TextAd.SitelinksSetId, undefined);
+    assert.equal(body.params.Ads[0].TextAd.CalloutIds, undefined);
+  } finally {
+    restore();
+  }
+});

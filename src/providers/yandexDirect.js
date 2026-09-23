@@ -180,10 +180,13 @@ const addAdGroupNegativeKeywords = (projectId, adGroupId, negativeKeywords) =>
 
 /**
  * ads — массив { title, title2, text, href }. Расширения (быстрые ссылки/уточнения) в Direct
- * API v5 создаются отдельными сервисами (Sitelinks.add возвращает SitelinksSetId, Callouts.add
- * возвращает Id уточнений) и затем ссылаются в теле объявления по Id/SetId — здесь передаём их
- * как уже подготовленный набор ссылок через extensions, а не создаём заново на каждый вызов.
- * TODO: перед первым live-вызовом сверить точные поля Ads.add для TextAd.Sitelinks/CalloutIds.
+ * API v5 создаются отдельными сервисами (createSitelinksSet возвращает SitelinksSetId,
+ * createCallouts возвращает Id уточнений) и затем ссылаются в теле объявления — здесь передаём
+ * их как уже подготовленный набор через extensions, а не создаём заново на каждый вызов.
+ * Поля внутри TextAd называются иначе, чем можно предположить (подтверждено вживую — Директ
+ * отвечал [8000] "неизвестный параметр TextAd.SitelinksSetId" со старыми именами):
+ *   sitelinksSetId → TextAd.SitelinkSetId (без "s" в середине — "Sitelink", не "Sitelinks")
+ *   calloutIds     → TextAd.AdExtensionIds (общее поле для Id расширений, не "CalloutIds")
  */
 const createAds = (projectId, adGroupId, ads) =>
   callMethod(
@@ -197,8 +200,8 @@ const createAds = (projectId, adGroupId, ads) =>
           Title2: ad.title2,
           Text: ad.text,
           Href: ad.href,
-          ...(ad.extensions?.sitelinksSetId ? { SitelinksSetId: ad.extensions.sitelinksSetId } : {}),
-          ...(ad.extensions?.calloutIds ? { CalloutIds: ad.extensions.calloutIds } : {}),
+          ...(ad.extensions?.sitelinksSetId ? { SitelinkSetId: ad.extensions.sitelinksSetId } : {}),
+          ...(ad.extensions?.calloutIds ? { AdExtensionIds: ad.extensions.calloutIds } : {}),
         },
       })),
     },
