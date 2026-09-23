@@ -166,6 +166,14 @@ const createAdGroup = (projectId, campaignId, name, regionIds = [225]) =>
 const addKeywords = (projectId, adGroupId, keywordTexts) =>
   callMethod(projectId, 'keywords', { Keywords: keywordTexts.map((k) => ({ AdGroupId: adGroupId, Keyword: k })) }, 'add');
 
+/**
+ * Keywords.delete по Id. Используется, в частности, для отключения автотаргетинга: Директ может
+ * сам добавить в группу служебную псевдо-фразу "---autotargeting" при создании через API — по
+ * плейбуку (раздел 2) автотаргетинг нельзя оставлять без ограничений, отключается удалением
+ * этой записи. Также пригодится для регулярной чистки минус-фраз по разбору поисковых запросов.
+ */
+const deleteKeywords = (projectId, keywordIds) => callMethod(projectId, 'keywords', { SelectionCriteria: { Ids: keywordIds } }, 'delete');
+
 /** Минус-слова на уровне группы объявлений (не кампании) — AdGroups.update. */
 const addAdGroupNegativeKeywords = (projectId, adGroupId, negativeKeywords) =>
   callMethod(projectId, 'adgroups', { AdGroups: [{ Id: adGroupId, NegativeKeywords: { Items: negativeKeywords } }] }, 'update');
@@ -197,6 +205,28 @@ const createAds = (projectId, adGroupId, ads) =>
     'add'
   );
 
+/**
+ * Быстрые ссылки. sitelinks — массив { title (≤30 симв.), href, description? (≤60 симв.) }.
+ * Один набор (SitelinksSetId) можно переиспользовать в нескольких объявлениях.
+ * Источник: https://yandex.ru/dev/direct/doc/ref-v5/sitelinks/add.html
+ */
+const createSitelinksSet = (projectId, sitelinks) =>
+  callMethod(
+    projectId,
+    'sitelinks',
+    { SitelinksSets: [{ Sitelinks: sitelinks.map((s) => ({ Title: s.title, Href: s.href, ...(s.description ? { Description: s.description } : {}) })) }] },
+    'add'
+  );
+
+/**
+ * Уточнения. texts — массив строк (каждая ≤25 символов). Каждое уточнение создаётся отдельным
+ * элементом AdExtensions и получает свой Id — в объявлении передаются как массив CalloutIds.
+ * Сервис называется 'adextensions', а не 'callouts'. Источник:
+ * https://yandex.ru/dev/direct/doc/ru/adextensions/add
+ */
+const createCallouts = (projectId, texts) =>
+  callMethod(projectId, 'adextensions', { AdExtensions: texts.map((t) => ({ Callout: { CalloutText: t } })) }, 'add');
+
 module.exports = {
   getCampaigns,
   getAdGroups,
@@ -211,6 +241,9 @@ module.exports = {
   createCampaign,
   createAdGroup,
   addKeywords,
+  deleteKeywords,
   addAdGroupNegativeKeywords,
   createAds,
+  createSitelinksSet,
+  createCallouts,
 };

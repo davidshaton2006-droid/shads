@@ -160,3 +160,41 @@ test('createAdGroup принимает явный regionIds вместо деф�
     restore();
   }
 });
+
+// Подтверждено вживую: расширения создаются через отдельные сервисы ('sitelinks', 'adextensions'
+// — не 'callouts'), структура полей сверена с официальной документацией перед первым вызовом.
+
+test('createSitelinksSet шлёт SitelinksSets на сервис sitelinks', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { AddResults: [{ Id: 1 }] } });
+  try {
+    await direct.createSitelinksSet('project-1', [
+      { title: 'Кейсы', href: 'https://example.com/#cases', description: 'Реальные проекты' },
+      { title: 'Вопросы', href: 'https://example.com/#faq' },
+    ]);
+    assert.equal(calls[0].url, 'https://api.direct.yandex.com/json/v5/sitelinks');
+    const body = JSON.parse(calls[0].options.body);
+    assert.equal(body.method, 'add');
+    assert.deepEqual(body.params.SitelinksSets[0].Sitelinks, [
+      { Title: 'Кейсы', Href: 'https://example.com/#cases', Description: 'Реальные проекты' },
+      { Title: 'Вопросы', Href: 'https://example.com/#faq' },
+    ]);
+  } finally {
+    restore();
+  }
+});
+
+test('createCallouts шлёт AdExtensions с Callout.CalloutText на сервис adextensions', async () => {
+  const { calls, restore } = mockFetchOnce({ result: { AddResults: [{ Id: 1 }, { Id: 2 }] } });
+  try {
+    await direct.createCallouts('project-1', ['Работаю лично', 'Без посредников']);
+    assert.equal(calls[0].url, 'https://api.direct.yandex.com/json/v5/adextensions');
+    const body = JSON.parse(calls[0].options.body);
+    assert.equal(body.method, 'add');
+    assert.deepEqual(body.params.AdExtensions, [
+      { Callout: { CalloutText: 'Работаю лично' } },
+      { Callout: { CalloutText: 'Без посредников' } },
+    ]);
+  } finally {
+    restore();
+  }
+});
