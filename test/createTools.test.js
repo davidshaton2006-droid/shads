@@ -42,8 +42,13 @@ const PROJECT_ID = 'project-1';
 
 // requiresConfirmation=true (дефолт) — pending_action создаётся, execute() не вызывается.
 // requiresConfirmation=false — execute() вызывается сразу, pending считается approved.
+// Кампании, привязанные к проекту (project_campaigns): 1 — Директ, 'vk-1' — VK. Write-инструменты над
+// campaignId проверяют привязку ещё до постановки заявки в очередь.
+const BOUND_CAMPAIGNS = () => ({ data: [{ external_campaign_id: '1' }, { external_campaign_id: 'vk-1' }], error: null });
+
 function fakeSupabaseForAction({ requiresConfirmation, onInsert, onLog } = {}) {
   return createFakeSupabase({
+    project_campaigns: BOUND_CAMPAIGNS,
     project_action_settings: () => ({ data: requiresConfirmation === undefined ? null : { requires_confirmation: requiresConfirmation }, error: null }),
     pending_actions: (state) => {
       if (state.op === 'insert') {
@@ -84,7 +89,7 @@ test('yandex_create_campaign: валидный вызов ставится в о
 });
 
 test('yandex_create_ad_group_with_keywords: пустой negativeKeywords запрещён на уровне валидации', async () => {
-  currentFake = createFakeSupabase({});
+  currentFake = createFakeSupabase({ project_campaigns: BOUND_CAMPAIGNS });
   const tool = findTool(yandexTools, 'yandex_create_ad_group_with_keywords');
 
   await assert.rejects(
@@ -199,7 +204,7 @@ test('vk_create_campaign: objective="traffic" с confirmTrafficObjective=true п
 });
 
 test('vk_create_ad_group: меньше 2 сегментов аудитории запрещено', async () => {
-  currentFake = createFakeSupabase({});
+  currentFake = createFakeSupabase({ project_campaigns: BOUND_CAMPAIGNS });
   const tool = findTool(vkTools, 'vk_create_ad_group');
 
   await assert.rejects(
@@ -254,4 +259,65 @@ test('vk_create_ad: меньше 2 креативов запрещено', async
       }),
     /Нужно минимум 2 варианта креатива/
   );
+});
+
+// ---------- Изоляция проектов в одном рекламном аккаунте (миграция 0004) ----------
+
+test('yandex_pause_campaign: чужая/непривязанная кампания отклоняется до постановки в очередь', async () => {
+  const inserted = [];
+  currentFake = createFakeSupabase({
+    project_campaigns: BOUND_CAMPAIGNS,
+    pending_actions: (state) => {
+      inserted.push(state.payload);
+      return { data: { id: 'x', ...state.payload }, error: null };
+    },
+  });
+  const tool = findTool(yandexTools, 'yandex_pause_campaign');
+
+  await assert.rejects(
+    () => tool.handler({ projectId: PROJECT_ID, campaignId: 999, reasoning: 'тест' }),
+    /не привязана к этому проекту/
+  );
+  assert.equal(inserted.length, 0, 'заявка на паузу чужой кампании не должна создаваться');
+});
+
+test('vk_update_budget: чужая кампания отклоняется', async () => {
+  currentFake = createFakeSupabase({ project_campaigns: BOUND_CAMPAIGNS });
+  const tool = findTool(vkTools, 'vk_update_budget');
+  await assert.rejects(
+    () => tool.handler({ projectId: PROJECT_ID, campaignId: 'vk-other', dailyBudget: 100, reasoning: 'тест' }),
+    /не привязана к этому проекту/
+  );
+});
+
+test('yandex_get_campaigns возвращает только кампании, привязанные к проекту', async () => {
+  currentFake = createFakeSupabase({ project_campaigns: BOUND_CAMPAIGNS });
+  currentDirect = {
+    getCampaigns: async () => ({ Campaigns: [{ Id: 1, Name: 'Наша' }, { Id: 2, Name: 'Чужая' }] }),
+  };
+  const tool = findTool(yandexTools, 'yandex_get_campaigns');
+  const result = JSON.parse((await tool.handler({ projectId: PROJECT_ID })).content[0].text);
+  assert.deepEqual(result.Campaigns.map((c) => c.Name), ['Наша']);
+});
+
+test('yandex_create_campaign (автономный режим): созданная кампания сразу привязывается к проекту', async () => {
+  const bindings = [];
+  currentFake = createFakeSupabase({
+    project_action_settings: () => ({ data: { requires_confirmation: false }, error: null }),
+    pending_actions: (state) => ({ data: { id: 'p1', ...(state.payload ?? {}) }, error: null }),
+    action_log: () => ({ data: null, error: null }),
+    project_campaigns: (state) => {
+      if (state.op === 'insert') {
+        bindings.push(state.payload);
+        return { data: null, error: null };
+      }
+      return { data: null, error: null }; // уже существующей привязки нет
+    },
+  });
+  currentDirect = { createCampaign: async () => ({ AddResults: [{ Id: 714687999, Errors: [] }] }) };
+
+  const tool = findTool(yandexTools, 'yandex_create_campaign');
+  await tool.handler({ projectId: PROJECT_ID, name: 'Тест', type: 'SEARCH', dailyBudgetMicros: 300_000_000, reasoning: 'тест' });
+
+  assert.deepEqual(bindings, [{ project_id: PROJECT_ID, provider: 'yandex_direct', external_campaign_id: '714687999' }]);
 });

@@ -63,8 +63,18 @@ function baseVkStub(overrides = {}) {
   };
 }
 
-function fakeSupabaseFor({ connections, stopRules, onProjectUpdate, onStopEvent }) {
+// Привязка кампаний к проекту (project_campaigns, миграция 0004): handler отдаёт Id по провайдеру,
+// как это делает реальный запрос с .eq('provider', ...).
+function boundCampaigns({ yandex = [], vk = [] } = {}) {
+  return (state) => {
+    const ids = state.filters.provider === 'yandex_direct' ? yandex : vk;
+    return { data: ids.map((id) => ({ external_campaign_id: id })), error: null };
+  };
+}
+
+function fakeSupabaseFor({ connections, stopRules, onProjectUpdate, onStopEvent, bound = { yandex: ['1'] } }) {
   return createFakeSupabase({
+    project_campaigns: boundCampaigns(bound),
     projects: (state) => {
       if (state.op === 'update') {
         onProjectUpdate?.(state.payload);
@@ -84,6 +94,7 @@ function fakeSupabaseFor({ connections, stopRules, onProjectUpdate, onStopEvent 
 test('getSpendAndConversionsFor суммирует расход/конверсии Директа и VK и считает CPA', async () => {
   currentFake = createFakeSupabase({
     connections: () => ({ data: [{ provider: 'yandex_direct' }, { provider: 'vk_ads' }], error: null }),
+    project_campaigns: boundCampaigns({ yandex: ['1', '2'], vk: ['1'] }),
   });
   currentDirect = baseDirectStub({
     getCampaignPerformanceReport: async () => [
@@ -191,4 +202,75 @@ test('checkProjectStopRules НЕ ставит на паузу, когда мет
 
   assert.equal(suspendCalls.length, 0);
   assert.equal(stopEvents.length, 0);
+});
+
+// ---------- Изоляция проектов в одном рекламном аккаунте (миграция 0004) ----------
+// Несколько клиентов могут жить в одном аккаунте Директа. Стоп-кран и расчёт расхода одного
+// проекта не должны затрагивать кампании других.
+
+test('pauseAllCampaigns ставит на паузу ТОЛЬКО кампании проекта, чужие кампании аккаунта не трогает', async () => {
+  const suspended = [];
+  currentDirect = baseDirectStub({
+    getCampaigns: async () => ({
+      Campaigns: [
+        { Id: 1, Status: 'ACCEPTED', State: 'ON' }, // наша
+        { Id: 2, Status: 'ACCEPTED', State: 'ON' }, // чужая (другой проект в этом же аккаунте)
+      ],
+    }),
+    suspendCampaign: async (_projectId, campaignId) => {
+      suspended.push(campaignId);
+    },
+  });
+  currentFake = fakeSupabaseFor({ connections: [{ provider: 'yandex_direct' }], stopRules: [], bound: { yandex: ['1'] } });
+
+  await pauseAllCampaignsFor(PROJECT);
+
+  assert.deepEqual(suspended, [1]);
+});
+
+test('getSpendAndConversionsFor запрашивает отчёт только по своим кампаниям и игнорирует чужие кампании VK', async () => {
+  let reportArgs;
+  currentDirect = baseDirectStub({
+    getCampaignPerformanceReport: async (_projectId, args) => {
+      reportArgs = args;
+      return [{ campaignId: '1', cost: 400, conversions: 1 }];
+    },
+  });
+  currentVk = baseVkStub({
+    getStats: async () => ({
+      items: [
+        { id: 7, rows: [{ base: { spent: '100' }, events: { conversions: 1 } }] }, // своя
+        { id: 8, rows: [{ base: { spent: '9999' }, events: { conversions: 0 } }] }, // чужая
+      ],
+    }),
+  });
+  currentFake = createFakeSupabase({
+    connections: () => ({ data: [{ provider: 'yandex_direct' }, { provider: 'vk_ads' }], error: null }),
+    project_campaigns: boundCampaigns({ yandex: ['1'], vk: ['7'] }),
+  });
+
+  const result = await getSpendAndConversionsFor(PROJECT, 24);
+
+  assert.deepEqual(reportArgs.campaignIds, ['1']);
+  assert.equal(result.spend, 500); // 400 (Директ) + 100 (своя кампания VK), 9999 чужой не учтено
+  assert.equal(result.conversions, 2);
+});
+
+test('проект без привязанных кампаний: отчёты не запрашиваются, расход 0, стоп-кран не может сработать на чужих данных', async () => {
+  let reportCalls = 0;
+  currentDirect = baseDirectStub({
+    getCampaignPerformanceReport: async () => {
+      reportCalls += 1;
+      return [{ campaignId: '2', cost: 5000, conversions: 0 }];
+    },
+  });
+  currentFake = createFakeSupabase({
+    connections: () => ({ data: [{ provider: 'yandex_direct' }], error: null }),
+    project_campaigns: boundCampaigns({ yandex: [] }),
+  });
+
+  const result = await getSpendAndConversionsFor(PROJECT, 24);
+
+  assert.equal(reportCalls, 0);
+  assert.deepEqual(result, { spend: 0, conversions: 0, cpa: 0 });
 });

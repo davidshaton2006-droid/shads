@@ -3,6 +3,7 @@ const vk = require('../providers/vkAds');
 const { getSupabase } = require('../lib/supabase');
 const { checkProjectStopRules } = require('./stopCran');
 const { notifyStopCranTriggered } = require('../lib/telegram');
+const { getBoundCampaignIds } = require('../lib/campaignBinding');
 
 // Провайдер-специфичная реализация зависимостей checkProjectStopRules. Держим отдельно от
 // stopCran.js, чтобы логика правил (когда срабатывает стоп) не зависела от того, как именно
@@ -32,19 +33,28 @@ async function getSpendAndConversionsFor(project, windowHours) {
   let spend = 0;
   let conversions = 0;
 
+  // Считаем ТОЛЬКО кампании, привязанные к проекту (project_campaigns): несколько клиентов могут
+  // жить в одном рекламном аккаунте, и расход соседа не должен срабатывать на чужой стоп-кран.
   if (providers.includes('yandex_direct')) {
-    const rows = await direct.getCampaignPerformanceReport(project.id, { dateFrom, dateTo });
-    for (const row of rows) {
-      spend += row.cost;
-      conversions += row.conversions;
+    const campaignIds = await getBoundCampaignIds(project.id, 'yandex_direct');
+    if (campaignIds.length) {
+      const rows = await direct.getCampaignPerformanceReport(project.id, { campaignIds, dateFrom, dateTo });
+      for (const row of rows) {
+        spend += row.cost;
+        conversions += row.conversions;
+      }
     }
   }
 
   if (providers.includes('vk_ads')) {
-    const stats = await vk.getStats(project.id, { date_from: dateFrom, date_to: dateTo });
-    const vkTotals = vk.sumSpendAndConversions(stats);
-    spend += vkTotals.spend;
-    conversions += vkTotals.conversions;
+    const campaignIds = await getBoundCampaignIds(project.id, 'vk_ads');
+    if (campaignIds.length) {
+      const stats = await vk.getStats(project.id, { date_from: dateFrom, date_to: dateTo });
+      const own = { items: (stats?.items ?? []).filter((item) => campaignIds.includes(String(item.id))) };
+      const vkTotals = vk.sumSpendAndConversions(own);
+      spend += vkTotals.spend;
+      conversions += vkTotals.conversions;
+    }
   }
 
   const cpa = conversions > 0 ? spend / conversions : 0;
@@ -57,14 +67,18 @@ async function pauseAllCampaignsFor(project) {
 
   for (const conn of connections ?? []) {
     if (conn.provider === 'yandex_direct') {
+      const boundIds = await getBoundCampaignIds(project.id, 'yandex_direct');
       const campaigns = await direct.getCampaigns(project.id);
       for (const c of campaigns?.Campaigns ?? []) {
+        if (!boundIds.includes(String(c.Id))) continue; // чужие кампании аккаунта не трогаем
         if (c.Status === 'ACCEPTED' || c.State === 'ON') await direct.suspendCampaign(project.id, c.Id);
       }
     }
     if (conn.provider === 'vk_ads') {
+      const boundIds = await getBoundCampaignIds(project.id, 'vk_ads');
       const campaigns = await vk.getCampaigns(project.id);
       for (const c of campaigns?.items ?? []) {
+        if (!boundIds.includes(String(c.id))) continue;
         if (c.status === 'active') await vk.pauseCampaign(project.id, c.id);
       }
     }

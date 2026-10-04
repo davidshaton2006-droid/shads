@@ -1,5 +1,6 @@
 const vk = require('../../providers/vkAds');
 const { guardedWrite } = require('./writeHelper');
+const { getBoundCampaignIds, assertCampaignInProject, bindCampaign } = require('../../lib/campaignBinding');
 
 const projectIdProp = { projectId: { type: 'string', description: 'UUID проекта в Supabase' } };
 
@@ -10,7 +11,13 @@ const tools = [
     description: 'Список кампаний (ad_plans) VK Ads проекта.',
     inputSchema: { type: 'object', properties: { ...projectIdProp }, required: ['projectId'] },
     riskLevel: 'read',
-    handler: async ({ projectId }) => ({ content: [{ type: 'text', text: JSON.stringify(await vk.getCampaigns(projectId)) }] }),
+    handler: async ({ projectId }) => {
+      // Только кампании, привязанные к проекту (см. миграцию 0004).
+      const bound = await getBoundCampaignIds(projectId, 'vk_ads');
+      const all = await vk.getCampaigns(projectId);
+      const own = { ...all, items: (all?.items ?? []).filter((c) => bound.includes(String(c.id))) };
+      return { content: [{ type: 'text', text: JSON.stringify(own) }] };
+    },
   },
   {
     name: 'vk_get_stats',
@@ -122,7 +129,11 @@ const tools = [
         provider: 'vk_ads',
         payload: { name, objective, dailyBudget },
         reasoning,
-        execute: () => vk.createCampaign(projectId, { name, objective, budget_limit_day: dailyBudget }),
+        execute: async () => {
+          const created = await vk.createCampaign(projectId, { name, objective, budget_limit_day: dailyBudget });
+          await bindCampaign(projectId, 'vk_ads', created?.id);
+          return created;
+        },
       });
     },
   },
@@ -214,5 +225,16 @@ const tools = [
     },
   },
 ];
+
+// Write-инструменты над конкретной кампанией — только по кампаниям своего проекта.
+const CAMPAIGN_SCOPED_TOOLS = ['vk_update_budget', 'vk_pause_campaign', 'vk_resume_campaign', 'vk_create_ad_group'];
+for (const tool of tools) {
+  if (!CAMPAIGN_SCOPED_TOOLS.includes(tool.name)) continue;
+  const original = tool.handler;
+  tool.handler = async (args) => {
+    await assertCampaignInProject(args.projectId, 'vk_ads', args.campaignId);
+    return original(args);
+  };
+}
 
 module.exports = { tools };

@@ -1,6 +1,7 @@
 const direct = require('../../providers/yandexDirect');
 const metrika = require('../../providers/yandexMetrika');
 const { guardedWrite } = require('./writeHelper');
+const { getBoundCampaignIds, assertCampaignInProject, bindCreatedYandexCampaign } = require('../../lib/campaignBinding');
 
 const projectIdProp = { projectId: { type: 'string', description: 'UUID проекта в Supabase' } };
 
@@ -38,7 +39,13 @@ const tools = [
     description: 'Список кампаний Яндекс.Директа проекта со статусами и дневными бюджетами.',
     inputSchema: { type: 'object', properties: { ...projectIdProp }, required: ['projectId'] },
     riskLevel: 'read',
-    handler: async ({ projectId }) => ({ content: [{ type: 'text', text: JSON.stringify(await direct.getCampaigns(projectId)) }] }),
+    handler: async ({ projectId }) => {
+      // Только кампании, привязанные к проекту: в одном аккаунте могут жить несколько клиентов.
+      const bound = await getBoundCampaignIds(projectId, 'yandex_direct');
+      const all = await direct.getCampaigns(projectId);
+      const own = { ...all, Campaigns: (all?.Campaigns ?? []).filter((c) => bound.includes(String(c.Id))) };
+      return { content: [{ type: 'text', text: JSON.stringify(own) }] };
+    },
   },
   {
     name: 'yandex_get_keywords',
@@ -195,7 +202,11 @@ const tools = [
         provider: 'yandex_direct',
         payload: { name, type, dailyBudgetMicros },
         reasoning,
-        execute: () => direct.createCampaign(projectId, campaignDefinition),
+        execute: async () => {
+          const created = await direct.createCampaign(projectId, campaignDefinition);
+          await bindCreatedYandexCampaign(projectId, created);
+          return created;
+        },
       });
     },
   },
@@ -300,5 +311,24 @@ const tools = [
     },
   },
 ];
+
+// Write-инструменты над конкретной кампанией не должны трогать кампании других проектов,
+// даже если они лежат в том же рекламном аккаунте (см. миграцию 0004). Проверка идёт ДО
+// постановки заявки в очередь на подтверждение — чужая кампания отклоняется сразу.
+const CAMPAIGN_SCOPED_TOOLS = [
+  'yandex_add_negative_keywords',
+  'yandex_update_campaign_budget',
+  'yandex_pause_campaign',
+  'yandex_resume_campaign',
+  'yandex_create_ad_group_with_keywords',
+];
+for (const tool of tools) {
+  if (!CAMPAIGN_SCOPED_TOOLS.includes(tool.name)) continue;
+  const original = tool.handler;
+  tool.handler = async (args) => {
+    await assertCampaignInProject(args.projectId, 'yandex_direct', args.campaignId);
+    return original(args);
+  };
+}
 
 module.exports = { tools, buildCampaignDefinition };

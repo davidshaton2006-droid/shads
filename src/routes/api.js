@@ -7,6 +7,7 @@ const vk = require('../providers/vkAds');
 const { buildCampaignDefinition } = require('../mcp/tools/yandex');
 const leadgen = require('../leadgen/service');
 const { getOwnerId } = require('../lib/owner');
+const { getBoundCampaignIds, bindCampaign, bindCreatedYandexCampaign } = require('../lib/campaignBinding');
 const { runStopCranForAllProjects } = require('../guardrails/stopCranRunner');
 
 const router = express.Router();
@@ -148,16 +149,21 @@ async function getCampaignsForProject(projectId) {
 
   const campaigns = [];
 
-  if (providers.includes('yandex_direct')) {
+  // Только кампании, привязанные к проекту (project_campaigns) — иначе клиенты одного аккаунта
+  // видели бы кампании друг друга. Нет привязок — пустой список, а не «весь аккаунт».
+  const yandexBound = providers.includes('yandex_direct') ? await getBoundCampaignIds(projectId, 'yandex_direct') : [];
+  const vkBound = providers.includes('vk_ads') ? await getBoundCampaignIds(projectId, 'vk_ads') : [];
+
+  if (yandexBound.length) {
     const [campaignsResult, todayReport, weekReport] = await Promise.all([
       direct.getCampaigns(projectId),
-      direct.getCampaignPerformanceReport(projectId, { dateFrom: dateToday, dateTo: dateToday }),
-      direct.getCampaignPerformanceReport(projectId, { dateFrom: dateWeekAgo, dateTo: dateToday }),
+      direct.getCampaignPerformanceReport(projectId, { campaignIds: yandexBound, dateFrom: dateToday, dateTo: dateToday }),
+      direct.getCampaignPerformanceReport(projectId, { campaignIds: yandexBound, dateFrom: dateWeekAgo, dateTo: dateToday }),
     ]);
     const todayByCampaign = groupDirectReportByCampaign(todayReport);
     const weekByCampaign = groupDirectReportByCampaign(weekReport);
 
-    for (const c of campaignsResult?.Campaigns ?? []) {
+    for (const c of (campaignsResult?.Campaigns ?? []).filter((x) => yandexBound.includes(String(x.Id)))) {
       const byDate = weekByCampaign[c.Id]?.byDate ?? {};
       campaigns.push({
         provider: 'yandex_direct',
@@ -175,7 +181,7 @@ async function getCampaignsForProject(projectId) {
     }
   }
 
-  if (providers.includes('vk_ads')) {
+  if (vkBound.length) {
     const [campaignsResult, todayStats, weekStats] = await Promise.all([
       vk.getCampaigns(projectId),
       vk.getStats(projectId, { date_from: dateToday, date_to: dateToday }),
@@ -185,7 +191,7 @@ async function getCampaignsForProject(projectId) {
     const weekByCampaign = vk.statsByCampaignId(weekStats);
     const weekByCampaignDaily = vk.dailySpendByCampaignId(weekStats);
 
-    for (const c of campaignsResult?.items ?? []) {
+    for (const c of (campaignsResult?.items ?? []).filter((x) => vkBound.includes(String(x.id)))) {
       const byDate = weekByCampaignDaily[c.id] ?? {};
       campaigns.push({
         provider: 'vk_ads',
@@ -203,6 +209,34 @@ async function getCampaignsForProject(projectId) {
 
   return campaigns;
 }
+
+// Ручная привязка кампании, созданной вне SHADS (например, в интерфейсе Директа), к проекту.
+// Созданные через SHADS привязываются автоматически при выполнении campaign.create.
+router.post('/projects/:id/campaigns/bind', async (req, res) => {
+  try {
+    const { provider, campaignId } = req.body;
+    if (!['yandex_direct', 'vk_ads'].includes(provider) || !campaignId) {
+      return res.status(400).json({ error: 'Нужны provider (yandex_direct|vk_ads) и campaignId' });
+    }
+    await bindCampaign(req.params.id, provider, campaignId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Кампании аккаунта Директа, ещё не закреплённые ни за одним проектом, — что можно привязать.
+router.get('/projects/:id/campaigns/unbound', async (req, res) => {
+  try {
+    const all = await direct.getCampaigns(req.params.id);
+    const { data: bound, error } = await getSupabase().from('project_campaigns').select('external_campaign_id').eq('provider', 'yandex_direct');
+    if (error) throw new Error(error.message);
+    const boundIds = new Set((bound ?? []).map((r) => String(r.external_campaign_id)));
+    res.json((all?.Campaigns ?? []).filter((c) => !boundIds.has(String(c.Id))).map((c) => ({ id: c.Id, name: c.Name, status: c.Status })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/projects/:id/campaigns', async (req, res) => {
   try {
@@ -335,7 +369,14 @@ async function executePendingAction(pending) {
     if (action_key === 'campaign.resume') return direct.resumeCampaign(project_id, payload.campaignId);
     if (action_key === 'campaign.create') {
       const definition = buildCampaignDefinition({ name: payload.name, type: payload.type, dailyBudgetMicros: payload.dailyBudgetMicros });
-      return direct.createCampaign(project_id, definition);
+      const created = await direct.createCampaign(project_id, definition);
+      // Созданная кампания сразу закрепляется за проектом — иначе проект её не увидит (см. 0004).
+      try {
+        await bindCreatedYandexCampaign(project_id, created);
+      } catch (err) {
+        throw new Error(`Кампания создана в Директе (${JSON.stringify(created)}), но привязать к проекту не удалось: ${err.message}`);
+      }
+      return created;
     }
     if (action_key === 'ad_group.create') {
       const adGroupResult = await direct.createAdGroup(project_id, payload.campaignId, payload.name);
@@ -352,7 +393,15 @@ async function executePendingAction(pending) {
     if (action_key === 'campaign.pause') return vk.pauseCampaign(project_id, payload.campaignId);
     if (action_key === 'campaign.resume') return vk.resumeCampaign(project_id, payload.campaignId);
     if (action_key === 'audience.update') return vk.updateTargeting(project_id, payload.adGroupId, payload.targeting);
-    if (action_key === 'campaign.create') return vk.createCampaign(project_id, { name: payload.name, objective: payload.objective, budget_limit_day: payload.dailyBudget });
+    if (action_key === 'campaign.create') {
+      const created = await vk.createCampaign(project_id, { name: payload.name, objective: payload.objective, budget_limit_day: payload.dailyBudget });
+      try {
+        await bindCampaign(project_id, 'vk_ads', created?.id);
+      } catch (err) {
+        throw new Error(`Кампания создана в VK (${JSON.stringify(created)}), но привязать к проекту не удалось: ${err.message}`);
+      }
+      return created;
+    }
     if (action_key === 'ad_group.create') {
       const results = [];
       for (const group of payload.adGroups) {
