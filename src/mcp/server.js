@@ -1,4 +1,5 @@
-require('dotenv').config();
+// .env ищем рядом с проектом, а не в cwd процесса: MCP-сервер запускается из других чатов/папок.
+require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
