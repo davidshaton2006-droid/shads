@@ -1,0 +1,30 @@
+name: Deploy to Render
+
+# Сервис на Render создан по публичной ссылке на репозиторий, без привязки GitHub-аккаунта, поэтому
+# автодеплой Render по пушам недоступен. Вместо него: после зелёных тестов дёргаем Deploy Hook
+# (Render → сервис → Settings → Deploy Hook) — ссылка хранится в секрете RENDER_DEPLOY_HOOK.
+# Нет секрета — шаг деплоя пропускается, workflow не падает.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK не задан — деплой пропущен"
+            exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
