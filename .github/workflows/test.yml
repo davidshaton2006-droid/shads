@@ -13,5 +13,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Тесты используют только встроенный node:test и моки (см. test/helpers), npm install не нужен.
+      # Часть тестов подтягивает @supabase/supabase-js через src/lib/supabase.js (мокается, но require нужен).
+      - run: npm ci
       - run: npm test
